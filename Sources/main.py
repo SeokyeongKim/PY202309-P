@@ -14,70 +14,69 @@ import sys
 from scipy.cluster.hierarchy import dendrogram, linkage
 from matplotlib import pyplot as plt
 import random
-# 클러스터링 전처리
 import copy 
 from gensim.models import Doc2Vec
 from keras.preprocessing.text import Tokenizer
 import numpy as np
-
 from collections import Counter
 from wordcloud import WordCloud
 import operator
 import time
+from tqdm import tqdm
 
+# For running time measurements
 start_time = time.time()
 
-data = pd.read_csv("JAM.csv", engine='python',encoding='CP949')
-train_data = pd.DataFrame(data)
+# Preprocessing of data
+print("데이터 전처리 시작!")
+print("조금만 기다려주세요. 3분 정도 소요됩니다 :)")
+raw_data = pd.read_csv("JAM.csv", engine='python',encoding='CP949')
+train_data = pd.DataFrame(raw_data)
 
 train_data = train_data[train_data['가사'].notnull()]
 
-# 중복된 가사 제거
+# Remove duplicate lyrics
 train_data.shape[0] - train_data['가사'].nunique()
 train_data.drop_duplicates(subset=['가사'], inplace=True)
-
-# '년도', '가수', '제목', '성별', '장르', '최고순위', '작사', '작곡', '소속사', '가사'
 titles = train_data['제목'].reset_index()
 groups = train_data['가수'].reset_index()
 
 titles_groups = pd.concat([titles, groups],axis=1)
 
-# 전처리가 끝난 전체 dataframe을 사용하고 싶을 때
-train_data_all = train_data
-
+# Full preprocessed dataframe
+preprocessed_train_data = train_data
 train_data = train_data['가사'].reset_index()
 
 
-# 이모티콘을 포함한 특수문자 모두 제거
+# Remove lyrics such as emoticons and special characters
 train_data['가사'] = train_data['가사'].str.replace("[^ㄱ-ㅎㅏ-ㅣ가-힣a-zA-Z ]","")
 train_data['가사'].replace('', np.nan, inplace=True)
 train_data = train_data.dropna(how = 'any')
 
-# 불용어 지정
+# Specify the stop words
 stopwords = ['의','가','이','은','들','는','좀','잘','걍','과','도','를','으로','자','에','와','한','하다']
 okt = Okt()
 
-# Okt를 사용, 형태소 단위로 단어 분류, 일정 수준의 정규화 실행
+# Use Okt, classify words by morphemes, and perform some level of normalization
 X_train = []
-for sentence in train_data['가사']:
+for sentence in tqdm(train_data['가사'], desc="토크나이징 진행 중"):
     temp_X = []
-    temp_X = okt.morphs(sentence, stem=True) # 토큰화
-    temp_X = [word for word in temp_X if not word in stopwords] # 불용어 제거
+    temp_X = okt.morphs(sentence, stem=True)  # 토큰화
+    temp_X = [word for word in temp_X if not word in stopwords]  # 불용어 제거
     X_train.append(temp_X)
 
-
-# 토큰화한 X_test를 저장
+# Save the tokenized X_test
 X_train_nparray = np.array(X_train, dtype='object')
 np.save('./X_train',X_train_nparray)
 
 X_train = np.load('./X_train.npy',allow_pickle=True).tolist()
 
 common_texts_and_tags = [
-    (text, [train_data_all['제목'][train_data_all.index[i]], train_data_all['가수'][train_data_all.index[i]]],) for i, text in enumerate(X_train)]
+    (text, [preprocessed_train_data['제목'][preprocessed_train_data.index[i]], preprocessed_train_data['가수'][preprocessed_train_data.index[i]]],) for i, text in enumerate(X_train)]
 TRAIN_documents = [TaggedDocument(words=text, tags=tags) for text, tags in common_texts_and_tags]
 
 model = Doc2Vec(TRAIN_documents, vector_size=100, window=3, epochs=40, min_count=0, workers=4)
-model_name = "doc2vec_100,5,40,1,4"
+model_name = "doc2vec_100,3,40,0,4"
 model.save(model_name)
 model = Doc2Vec.load(model_name)
 
@@ -85,14 +84,13 @@ model = Doc2Vec.load(model_name)
 
 # Assuming you have already trained a Doc2Vec model and stored it in the variable 'model'
 # If not, you need to train a Doc2Vec model before using it.
+tokenizer = Tokenizer()
+tokenizer.fit_on_texts(preprocessed_train_data['가수'])
+X_singer = tokenizer.texts_to_sequences(preprocessed_train_data['가수'])
 
 tokenizer = Tokenizer()
-tokenizer.fit_on_texts(train_data_all['가수'])
-X_singer = tokenizer.texts_to_sequences(train_data_all['가수'])
-
-tokenizer = Tokenizer()
-tokenizer.fit_on_texts(train_data_all['장르'])
-X_genre = tokenizer.texts_to_sequences(train_data_all['장르'])
+tokenizer.fit_on_texts(preprocessed_train_data['장르'])
+X_genre = tokenizer.texts_to_sequences(preprocessed_train_data['장르'])
 
 # Assuming 'model' is your trained Doc2Vec model
 X2 = [] 
@@ -106,12 +104,12 @@ for n, x_genre in enumerate(X_genre):
 
 X3 = np.array(X2)
 
-print("K-Means Clustering")
+#print("K-Means Clustering")
 
 
 M_KMeans = KMeans(n_clusters=8, random_state=0)
-X = X3 # document vector 전체를 가져옴. 
-M_KMeans.fit(X)# fitting 
+X = X3   # Document vector 
+M_KMeans.fit(X)  # Fitting the model
 
 '''
 M_KMeans = KMeans(n_clusters=8, random_state=0)
@@ -124,12 +122,6 @@ for text_tags, label in zip(common_texts_and_tags, M_KMeans.labels_):
     text, tags = text_tags
     cluster_dict[label].append([tags, text])
 
-'''
-for label, lst in cluster_dict.items():
-    print(f"Cluster {label}")
-    for x in lst:
-        print(x)
-'''
 
 unique, counts = np.unique(M_KMeans.labels_, return_counts=True)
 dict(zip(unique, counts))
@@ -141,8 +133,8 @@ for clster in range(len(cluster_dict)):
     cluster_n_song = []
     gasa = []
     for song in cluster_dict[clster]:   
-        temp1 = list(train_data_all['제목'][train_data_all['제목']==song[0][0]].index)
-        temp2 = list(train_data_all['가수'][train_data_all['가수']==song[0][1]].index)
+        temp1 = list(preprocessed_train_data['제목'][preprocessed_train_data['제목']==song[0][0]].index)
+        temp2 = list(preprocessed_train_data['가수'][preprocessed_train_data['가수']==song[0][1]].index)
         
         for title in temp1:
             x = -1
@@ -150,11 +142,11 @@ for clster in range(len(cluster_dict)):
                x = title
                break
 
-        #print(train_data_all['제목'][x])
-        #print(train_data_all['장르'][x])
-        #print(train_data_all['가수'][x])
-        gasa.append(train_data_all['가사'][x])
-        cluster_n_song.append([train_data_all['장르'][x],train_data_all['가수'][x],train_data_all['소속사'][x],int(train_data_all['년도'][x]/10000),train_data_all['작곡'][x]])
+        #print(preprocessed_train_data['제목'][x])
+        #print(preprocessed_train_data['장르'][x])
+        #print(preprocessed_train_data['가수'][x])
+        gasa.append(preprocessed_train_data['가사'][x])
+        cluster_n_song.append([preprocessed_train_data['장르'][x],preprocessed_train_data['가수'][x],preprocessed_train_data['소속사'][x],int(preprocessed_train_data['년도'][x]/10000),preprocessed_train_data['작곡'][x]])
     cluster_n.append(cluster_n_song)
     gasas.append(gasa)
 
@@ -189,8 +181,8 @@ for clster in range(len(cluster_dict1)):
     cluster_n_song = []
     gasa = []
     for song in cluster_dict1[clster]:   
-        temp1 = list(train_data_all['제목'][train_data_all['제목']==song[0][0]].index)
-        temp2 = list(train_data_all['가수'][train_data_all['가수']==song[0][1]].index)
+        temp1 = list(preprocessed_train_data['제목'][preprocessed_train_data['제목']==song[0][0]].index)
+        temp2 = list(preprocessed_train_data['가수'][preprocessed_train_data['가수']==song[0][1]].index)
         
         for title in temp1:
             x = -1
@@ -198,16 +190,17 @@ for clster in range(len(cluster_dict1)):
                x = title
                break
 
-        #print(train_data_all['제목'][x])
-        #print(train_data_all['장르'][x])
-        #print(train_data_all['가수'][x])
-        gasa.append(train_data_all['가사'][x])
-        cluster_n_song.append([train_data_all['장르'][x],train_data_all['가수'][x],train_data_all['소속사'][x],int(train_data_all['년도'][x]/10000),train_data_all['작곡'][x]])
+        #print(preprocessed_train_data['제목'][x])
+        #print(preprocessed_train_data['장르'][x])
+        #print(preprocessed_train_data['가수'][x])
+        gasa.append(preprocessed_train_data['가사'][x])
+        cluster_n_song.append([preprocessed_train_data['장르'][x],preprocessed_train_data['가수'][x],preprocessed_train_data['소속사'][x],int(preprocessed_train_data['년도'][x]/10000),preprocessed_train_data['작곡'][x]])
     cluster_n.append(cluster_n_song)
     gasas.append(gasa)
 
+
 sentences_tag_n = []
-for n, cluster in enumerate(gasas):
+for n, cluster in tqdm(enumerate(gasas), desc="클러스터링 형태소 분석 진행 중", total=len(gasas)):
     sentences_tag = []
     for sentence in cluster:
         morph = okt.pos(sentence)
@@ -297,32 +290,32 @@ X = model.docvecs.vectors_docs
 
 linked = linkage(X, 'ward')
 
+print("데이터 전처리 완료!")
+
 #######################################################################################################################################
 #######################################################################################################################################
 #######################################################################################################################################
 
-input = ["Blueming"]
 
-print(f"입력하신 노래는 {input} 입니다.")
+# Ask the user for a song title.
+user_input = input("좋아하는 곡 제목을 입력해주세요(ex.Hello, Blueming) : ")
+print(f"입력하신 노래는 {user_input} 입니다.")
 
 input_lyrics = []
-for i in input:
-    try : 
-        input_lyrics.append(train_data_all['가사'][train_data_all['제목']==i].values[0])
-    except : 
-        try : 
-            # 검색 조건을 완화하여 검색
-            print("입력한 제목과 정확히 일치하는 곡이 데이터베이스에 없습니다.")
-            print("검색 조건을 완화하여 가사를 검색합니다.")
-        except :
-            print("입력한 제목과 일치하는 곡이 데이터베이스에 없습니다.")
-            print("외부 데이터베이스에서 가사를 검색합니다.")
+
+try:
+    # Search the database for lyrics corresponding to a song title
+    input_lyrics.append(preprocessed_train_data['가사'][preprocessed_train_data['제목'] == user_input].values[0])
+except:
+    # If the song you entered is not in the database..
+    print("죄송합니다. 입력한 제목과 정확히 일치하는 곡이 데이터베이스에 없습니다.")
+
 
 input_lyrics_tokenized = []
 for i in input_lyrics:
     temp_X = []
-    temp_X = okt.morphs(i, stem=True) # 토큰화
-    temp_X = [word for word in temp_X if not word in stopwords] # 불용어 제거
+    temp_X = okt.morphs(i, stem=True) # Tokenization
+    temp_X = [word for word in temp_X if not word in stopwords] # Remove stop words
 input_lyrics_tokenized.append(temp_X)
 
 similarity_list = []
@@ -357,16 +350,16 @@ for n, i in enumerate(cluster_cnt):
         max = i
         max_n = n
 
-print(f"{max_n}번 클러스터에 속한 노래들 중 랜덤으로 추출된 곡을 선택하여 추천합니다. ")
+#print(f"{max_n}번 클러스터에 속한 노래들 중 랜덤으로 추출된 곡을 선택하여 추천합니다. ")
 
 songint = []
 for i in range(10):
     num = random.randrange(len(cluster_dict[0]))
     while(num in songint):
         num = random.randrange(len(cluster_dict[0]))
-    songint.append(train_data_all['제목'][num])
+    songint.append(preprocessed_train_data['제목'][num])
 
-print(f"'{input}' 노래를 좋아한다면 이 노래도 들어보세요! : {songint}")     
+print(f"'{user_input}' 노래를 좋아한다면 이 노래도 들어보세요! : {songint}")     
 
 end_time = time.time()
 elapsed_time = end_time - start_time
