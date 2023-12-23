@@ -309,6 +309,7 @@ try:
 except:
     # If the song you entered is not in the database..
     print("죄송합니다. 입력한 제목과 정확히 일치하는 곡이 데이터베이스에 없습니다.")
+    sys.exit() # Exit the program
 
 
 input_lyrics_tokenized = []
